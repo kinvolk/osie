@@ -1,5 +1,5 @@
 alpine_version_aarch64 := 3.4
-alpine_version_x86_64 := 3.7
+alpine_version_x86_64 := 3.11
 
 arches := aarch64 x86_64
 x86s := x86_64
@@ -258,13 +258,16 @@ build/$v/repo-x86_64:
 build/repo-x86_64:
 	$(Q)echo v${alpine_version_x86_64} > $@
 
+installer/alpine/assets:
+	$(Q)if [[ $${DRONE_BRANCH:-tag} != "master" ]]; then git fetch; assets_changed=$$(git diff --name-only origin/$${DRONE_BRANCH} origin/master | grep ^installer/alpine | wc -l); if [[ $${assets_changed} != "0" ]]; then echo "Installer assets are changed ($${assets_changed} files); rebuilding"; make -j$(nproc) -C installer/alpine all; ls -la /tmp/$${DRONE_BUILD_NUMBER}; mv /tmp/${{DRONE_BUILD_NUMBER}/* ${PWD}/build/; ls -la ${PWD}/build/; fi; fi
 
 define fetcher_arch_parch
 build/initramfs-$2: installer/alpine/assets-$2/initramfs
 build/modloop-$2:   installer/alpine/assets-$2/modloop
 build/vmlinuz-$2:   installer/alpine/assets-$2/vmlinuz
 build/initramfs-$2 build/modloop-$2 build/vmlinuz-$2:
-	$(Q)ln -nsf ../$$< $$@
+	$(E) "LINK: $$@"
+	$(Q)if [[ ! -f $$@ ]]; then ln -nsf ../$$< $$@; fi
 endef
 $(foreach parch,$(x86s),$(eval $(call fetcher_arch_parch,x86_64,$(parch))))
 $(foreach parch,$(arms),$(eval $(call fetcher_arch_parch,aarch64,$(parch))))

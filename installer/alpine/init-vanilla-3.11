@@ -122,29 +122,14 @@ setup_inittab_console() {
 }
 
 # determine the default interface to use if ip=dhcp is set
-# uses "packet_bootdev_mac" kopt value if it exists
-# if none, will use the first "eth" interface that has a carrier link
-# falls back to the first "eth" interface alphabetically
-# keep sync'ed with docker/scripts/functions.sh
+# uses the first "eth" interface with operstate 'up'.
 ip_choose_if() {
-	local mac
-	mac=$(echo "$KOPT_packet_bootdev_mac" | tr 'A-Z' 'a-z')
-	if [ -n "$mac" ]; then
-		for x in /sys/class/net/eth*; do
-			[ -e "$x" ] && grep -q "$mac" "$x/address" && echo ${x##*/} && return
-		done
+	if [ -n "$KOPT_BOOTIF" ]; then
+		mac=$(printf "%s\n" "$KOPT_BOOTIF" | sed 's/^01-//;s/-/:/g')
+		dev=$(grep -l $mac /sys/class/net/*/address | head -n 1)
+		dev=${dev%/*}
+		[ -n "$dev" ] && echo "${dev##*/}" && return
 	fi
-
-	for x in /sys/class/net/eth*; do
-		[ -e "$x" ] && ip link set ${x##*/} up
-	done
-
-	sleep 1
-
-	for x in /sys/class/net/eth*; do
-		[ -e "$x" ] && grep -q 1 "$x/carrier" && echo ${x##*/} && return
-	done
-
 	for x in /sys/class/net/eth*; do
 		if grep -iq up $x/operstate; then
 			[ -e "$x" ] && echo ${x##*/} && return
@@ -206,17 +191,8 @@ configure_ip() {
 			return 1
 		fi
 		ebegin "Obtaining IP via DHCP ($device)..."
-		for i in $(seq 5); do
-			ip link set dev $device down
-			sleep 5
-			ip link set dev $device up
-			sleep 5
-			udhcpc -i $device -f -q -n &&
-				echo "Sleeping for network up..." &&
-				sleep 5 &&
-				break
-			/bin/false
-		done
+		ifconfig "$device" 0.0.0.0
+		udhcpc -i "$device" -f -q
 		eend $?
 	else
 		# manual configuration
@@ -285,7 +261,6 @@ setup_nbd() {
 	[ "$n" != 0 ] || return 1
 }
 
-set -x
 rtc_exists() {
 	local rtc=
 	for rtc in /dev/rtc /dev/rtc[0-9]*; do
@@ -361,7 +336,6 @@ myopts="alpine_dev autodetect autoraid chart cryptroot cryptdm cryptheader crypt
 	pkgs quiet root_size root usbdelay ip alpine_repo apkovl alpine_start splash
 	blacklist overlaytmpfs rootfstype rootflags nbd resume s390x_net dasd ssh_key
 	BOOTIF"
-myopts="$myopts facility packet_action packet_base_url packet_bootdev_mac packet_state"
 
 for opt; do
 	case "$opt" in
@@ -380,32 +354,7 @@ for opt; do
 	done
 done
 
-# Add eclypsium driver(s)
-KOPT_modules="$KOPT_modules,eclypsiumdriver,ipmi_devintf"
-
 [ "$KOPT_quiet" = yes ] || echo "Alpine Init $VERSION"
-
-# enable debugging if requested
-[ -n "$KOPT_debug_init" ] && set -x
-
-ebegin "Verifying required kernel cmdline arguments"
-[ -z $KOPT_facility ] && eend 1 "missing required argument: facility"
-[ -z $KOPT_packet_action ] && eend 1 "missing required argument: packet_action"
-case $KOPT_packet_action in
-install) packet_action=osie-installer ;;
-rescue) packet_action=rescue-helper ;;
-workflow) packet_action=workflow-helper ;;
-*) eend 1 "unknown packet_action: $KOPT_packet_action" ;;
-esac
-
-case "$KOPT_packet_state" in
-'') ;;
-preinstalling) packet_action=runner ;;
-*) echo "ignoring packet_state: $KOPT_packet_state" ;;
-esac
-eend
-# set default values
-: ${KOPT_init:=/sbin/init}
 
 # enable debugging if requested
 [ -n "$KOPT_debug_init" ] && set -x
@@ -826,17 +775,6 @@ setup_inittab_console
 
 ! [ -f "$sysroot"/etc/resolv.conf ] && [ -f /etc/resolv.conf ] &&
 	cp /etc/resolv.conf "$sysroot"/etc
-
-# Setup $sysroot/etc/init.d
-mkdir -p "$sysroot/etc/init.d"
-
-# Setup OSIE helper
-ebegin "Fetching Packet $packet_action files"
-base="${KOPT_packet_base_url:-http://install.$KOPT_facility.packet.net/misc/osie/current}" &&
-	wget "$base/$packet_action-rc" -O "$sysroot/etc/init.d/${packet_action}" &&
-	wget "$base/$packet_action.sh" -O "$sysroot/sbin/${packet_action}" &&
-	chmod +x "$sysroot/etc/init.d/${packet_action}" "$sysroot/sbin/${packet_action}"
-eend $?
 
 # setup bootchart for switch_root
 chart_init=""
