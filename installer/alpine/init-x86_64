@@ -829,6 +829,7 @@ setup_inittab_console
 
 # Setup $sysroot/etc/init.d
 mkdir -p "$sysroot/etc/init.d"
+mkdir -p "$sysroot/sbin"
 
 # Setup OSIE helper
 ebegin "Fetching Packet $packet_action files"
